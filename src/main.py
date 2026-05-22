@@ -1,4 +1,5 @@
 import argparse
+from datetime import date
 from tkinter import Tk, filedialog
 from pathlib import Path
 from typing import Iterable, List
@@ -94,6 +95,8 @@ def main() -> None:
     aliases_map = get_column_aliases()
     tables = merger.merge_files(aliases_map=aliases_map)
 
+    tables = merger.format_tables(tables)
+
     if merger.errors:
         print("Some files were skipped:")
         for message in merger.errors:
@@ -106,7 +109,8 @@ def main() -> None:
     if args.output:
         output_path = Path(args.output)
     else:
-        output_path = select_output_with_dialog("merged_report.xlsx")
+        default_name = f"Import_Report_{date.today().isoformat()}.xlsx"
+        output_path = select_output_with_dialog(default_name)
         if output_path is None:
             print("No output file selected.")
             return

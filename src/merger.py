@@ -1,3 +1,4 @@
+from datetime import date
 import pandas as pd
 from openpyxl import load_workbook
 from pathlib import Path
@@ -183,6 +184,67 @@ class ExcelMerger:
             header_row=header_row,
         )
 
+    def format_tables(
+        self,
+        tables: Dict[str, pd.DataFrame],
+    ) -> Dict[str, pd.DataFrame]:
+        formatted: Dict[str, pd.DataFrame] = {}
+        required_columns = [
+            "Truck",
+            "Trailer",
+            "Position",
+            "Status",
+            "Departure Date",
+        ]
+        output_columns = [
+            "SN",
+            "Truck",
+            "Trailer",
+            "Position",
+            "Status",
+            "Type",
+            "Return",
+            "DSJ",
+        ]
+
+        for name, table in tables.items():
+            missing = [col for col in required_columns if col not in table.columns]
+            if missing:
+                self.errors.append(
+                    f"{name}: missing required columns {missing}"
+                )
+                continue
+
+            departure_dates = pd.to_datetime(
+                table["Departure Date"],
+                errors="coerce",
+            )
+            invalid_mask = departure_dates.isna()
+            if invalid_mask.any():
+                self.errors.append(
+                    f"{name}: {int(invalid_mask.sum())} rows missing/invalid Departure Date"
+                )
+
+            today = pd.Timestamp.now().normalize()
+            dsj = (today - departure_dates).dt.days
+            dsj = dsj.where(~invalid_mask, other=0).astype("Int64")
+
+            formatted_table = pd.DataFrame(
+                {
+                    "SN": range(1, len(table) + 1),
+                    "Truck": table["Truck"],
+                    "Trailer": table["Trailer"],
+                    "Position": table["Position"],
+                    "Status": table["Status"],
+                    "Type": "Flatbed",
+                    "Return": "NA",
+                    "DSJ": dsj,
+                }
+            )
+            formatted[name] = formatted_table[output_columns]
+
+        return formatted
+
     def aggregate(
         self,
         data: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
@@ -216,12 +278,31 @@ class ExcelMerger:
         output_path: Path,
         sheet_name: str = "Import Report",
         table_spacing: int = 2,
+        report_title: str = "Import Report",
+        report_date: Optional[str] = None,
     ) -> Path:
         output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
+        max_columns = max((len(table.columns) for table in tables.values()), default=0)
+        if report_date is None:
+            report_date = date.today().strftime("%d-%b")
+
         start_row = 0
         with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+            if max_columns > 0:
+                header_row = [""] * max_columns
+                header_row[0] = report_title
+                header_row[-1] = report_date
+                pd.DataFrame([header_row]).to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    startrow=start_row,
+                    index=False,
+                    header=False,
+                )
+                start_row += 2
+
             for title, table in tables.items():
                 display_title = Path(title).stem
                 pd.DataFrame([[display_title]]).to_excel(
