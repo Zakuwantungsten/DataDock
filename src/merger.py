@@ -215,6 +215,12 @@ class ExcelMerger:
                 )
                 continue
 
+            table = table.copy()
+            table[required_columns] = table[required_columns].replace(
+                r"^\s*$", pd.NA, regex=True
+            )
+            table = table.dropna(how="all", subset=required_columns).reset_index(drop=True)
+
             departure_dates = pd.to_datetime(
                 table["Departure Date"],
                 errors="coerce",

@@ -192,8 +192,8 @@ class DataDockApp:
         # Right: main content fills the rest
         content = tk.Frame(body, bg=C["bg"])
         content.pack(side="left", fill="both", expand=True)
-        content.rowconfigure(0, weight=7)
-        content.rowconfigure(1, weight=3)
+        content.rowconfigure(0, weight=12)
+        content.rowconfigure(1, weight=1, minsize=90)
         content.columnconfigure(0, weight=1)
 
         self._build_sidebar()
@@ -368,18 +368,21 @@ class DataDockApp:
                  fg=C["text_dim"], bg=C["surface"]).pack(anchor="w")
 
         self.report_select = tk.Frame(report_wrap, bg=C["surface_lo"],
-                                      highlightbackground=C["border"],
-                                      highlightthickness=1)
+                          highlightbackground=C["border"],
+                          highlightthickness=1, cursor="hand2")
         self.report_select.pack(anchor="w")
-        self.report_select.bind("<Button-1>", self._toggle_report_popup)
-        self.report_select.bind("<Enter>", self._schedule_report_popup)
-        self.report_select.bind("<Leave>", self._cancel_report_popup)
 
-        tk.Label(self.report_select, textvariable=self.report_summary_var,
-                 fg=C["text"], bg=C["surface_lo"],
-                 font=FONT_BODY, padx=8, pady=5).pack(side="left")
-        tk.Label(self.report_select, text="▾", fg=C["text_dim"],
-                 bg=C["surface_lo"], padx=6).pack(side="right")
+        self.report_label = tk.Label(self.report_select,
+                         textvariable=self.report_summary_var,
+                         fg=C["text"], bg=C["surface_lo"],
+                         font=FONT_BODY, padx=8, pady=5,
+                         cursor="hand2")
+        self.report_label.pack(side="left")
+        self.report_caret = tk.Label(self.report_select, text="▾",
+                         fg=C["text_dim"], bg=C["surface_lo"],
+                         padx=6, cursor="hand2")
+        self.report_caret.pack(side="right")
+        self._bind_report_select_events()
 
         # Truck search
         search_wrap = tk.Frame(filter_bar, bg=C["surface"])
@@ -438,6 +441,13 @@ class DataDockApp:
         # Alternating row colours
         self.tree.tag_configure("even", background=C["surface"])
         self.tree.tag_configure("odd",  background=C["surface_hi"])
+        self.tree.tag_configure("group_header",
+                    background=C["surface_lo"],
+                    foreground=C["text"],
+                    font=FONT_BADGE)
+        self.tree.tag_configure("spacer",
+                    background=C["surface"],
+                    foreground=C["surface"])
 
         y_scroll = ttk.Scrollbar(tree_frame, orient="vertical",
                                  command=self.tree.yview,
@@ -926,6 +936,13 @@ class DataDockApp:
             return
         self.report_summary_var.set(f"{len(selected)} selected")
 
+    def _bind_report_select_events(self) -> None:
+        widgets = [self.report_select, self.report_label, self.report_caret]
+        for widget in widgets:
+            widget.bind("<Button-1>", self._toggle_report_popup)
+            widget.bind("<Enter>", self._schedule_report_popup)
+            widget.bind("<Leave>", self._cancel_report_popup)
+
     def _schedule_report_popup(self, _event=None) -> None:
         if self.report_popup and self.report_popup.winfo_exists():
             return
@@ -934,6 +951,13 @@ class DataDockApp:
         self._report_hover_job = self.root.after(200, self._open_report_popup)
 
     def _cancel_report_popup(self, _event=None) -> None:
+        if self.report_select is not None:
+            widget = self.report_select.winfo_containing(
+                self.root.winfo_pointerx(),
+                self.root.winfo_pointery(),
+            )
+            if widget and (widget == self.report_select or widget.master == self.report_select):
+                return
         if self._report_hover_job:
             self.root.after_cancel(self._report_hover_job)
             self._report_hover_job = None
@@ -1082,19 +1106,53 @@ class DataDockApp:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        cols = list(df.columns) if not df.empty else OUTPUT_COLUMNS
-        self.tree.configure(columns=cols)
-        for col in cols:
+        display_cols = list(df.columns) if not df.empty else OUTPUT_COLUMNS
+        if "Source" in display_cols:
+            display_cols = [c for c in display_cols if c != "Source"]
+        if not display_cols:
+            display_cols = OUTPUT_COLUMNS
+
+        self.tree.configure(columns=display_cols)
+        for col in display_cols:
             self.tree.heading(col, text=col.upper())
             self.tree.column(col, width=100, minwidth=60, stretch=True, anchor="w")
         for narrow, w in [("SN", 50), ("DSJ", 70), ("Type", 90), ("Return", 80)]:
-            if narrow in cols:
+            if narrow in display_cols:
                 self.tree.column(narrow, width=w, minwidth=w - 10, stretch=False)
+
+        if df.empty:
+            return
+
+        if "Source" in df.columns:
+            row_index = 0
+            header_col = "Position" if "Position" in display_cols else display_cols[0]
+            header_index = display_cols.index(header_col)
+            current_width = self.tree.column(header_col, "width")
+            if current_width < 200:
+                self.tree.column(header_col, width=200, minwidth=120, stretch=True)
+            first_group = True
+            for source in df["Source"].dropna().astype(str).unique():
+                spacer_values = [""] * len(display_cols)
+                header_values = [""] * len(display_cols)
+                header_values[header_index] = f"--- {source} ---"
+                if not first_group:
+                    self.tree.insert("", "end", values=spacer_values, tags=("spacer",))
+                self.tree.insert("", "end", values=header_values, tags=("group_header",))
+
+                subset = df[df["Source"].astype(str) == source]
+                for _, row in subset.iterrows():
+                    tag = "even" if row_index % 2 == 0 else "odd"
+                    self.tree.insert("", "end",
+                                     values=[row.get(c, "") for c in display_cols],
+                                     tags=(tag,))
+                    row_index += 1
+                first_group = False
+            return
 
         for i, (_, row) in enumerate(df.iterrows()):
             tag = "even" if i % 2 == 0 else "odd"
             self.tree.insert("", "end",
-                             values=[row.get(c, "") for c in cols],
+                             values=[row.get(c, "") for c in display_cols],
                              tags=(tag,))
 
 
