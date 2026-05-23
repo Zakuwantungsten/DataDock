@@ -357,7 +357,7 @@ class ExcelMerger:
                 thin = Side(style="thin", color="9BA3AF")
                 border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-                target_headers = {"sn", "status", "position", "truck"}
+                target_headers = {"sn", "status", "position", "truck", "trailer", "type", "return", "dsj"}
 
                 if report_header_row is not None:
                     if max_columns > 1:

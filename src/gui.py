@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
 try:
@@ -1190,6 +1191,8 @@ class DataDockApp:
         if df.empty:
             return
 
+        self._autosize_treeview_columns(df, display_cols)
+
         if "Source" in df.columns:
             row_index = 0
             header_col = "Position" if "Position" in display_cols else display_cols[0]
@@ -1221,6 +1224,27 @@ class DataDockApp:
             self.tree.insert("", "end",
                              values=[row.get(c, "") for c in display_cols],
                              tags=(tag,))
+
+    def _autosize_treeview_columns(self, df: pd.DataFrame, display_cols: List[str]) -> None:
+        fixed_widths = {"SN": 50, "DSJ": 70, "Type": 90, "Return": 80}
+        min_widths = {"Truck": 120, "Trailer": 120, "Position": 140, "Status": 160}
+        max_width = 420
+        padding = 24
+
+        sample = df.head(200)
+        body_font = tkfont.Font(family=FONT_BODY[0], size=FONT_BODY[1])
+        header_font = tkfont.Font(family=FONT_BADGE[0], size=FONT_BADGE[1], weight="bold")
+
+        for col in display_cols:
+            if col in fixed_widths:
+                continue
+            max_px = header_font.measure(col.upper())
+            if col in sample.columns:
+                for value in sample[col].fillna("").astype(str).tolist():
+                    max_px = max(max_px, body_font.measure(value))
+            min_width = min_widths.get(col, 80)
+            width = max(min_width, min(max_width, max_px + padding))
+            self.tree.column(col, width=width, minwidth=min_width, stretch=True)
 
 
 def run_app() -> None:
