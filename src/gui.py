@@ -594,17 +594,58 @@ class DataDockApp:
                 added += 1
         self._refresh_file_list()
         self._log(f"Added {added} file(s). Total: {len(self.file_paths)}.")
+        self._refresh_preview_tables()
 
     def _clear_files(self) -> None:
         self.file_paths.clear()
         self._refresh_file_list()
         self._log("File list cleared.")
+        self._clear_preview_tables()
 
     def _remove_selected_file(self) -> None:
         for idx in reversed(list(self.file_listbox.curselection())):
             removed = self.file_paths.pop(idx)
             self._log(f"Removed: {removed.name}")
         self._refresh_file_list()
+        self._refresh_preview_tables()
+
+    def _clear_preview_tables(self) -> None:
+        self.tables = {}
+        self.table_display_map = {}
+        self.report_vars = {}
+        self._update_report_summary()
+        self._refresh_view()
+
+    def _refresh_preview_tables(self) -> None:
+        if not self.file_paths:
+            self._clear_preview_tables()
+            return
+
+        self._log("Loading preview…")
+        self.status_var.set("Previewing…")
+        self._status_dot.configure(fg=C["warn"])
+        self.root.update_idletasks()
+
+        merger = ExcelMerger()
+        merger.set_files(self.file_paths)
+        tables = merger.merge_files(aliases_map=self.aliases_map)
+        tables = merger.format_tables(tables)
+
+        for msg in merger.errors:
+            self._log(msg, "WARN")
+
+        if not tables:
+            self._log("No tables generated.", "ERROR")
+            self.status_var.set("Preview failed")
+            self._status_dot.configure(fg=C["error"])
+            self._clear_preview_tables()
+            return
+
+        self.tables = tables
+        self._update_table_selector()
+        self._refresh_view()
+        self.status_var.set("Preview ready")
+        self._status_dot.configure(fg=C["success"])
 
     def _refresh_file_list(self) -> None:
         self.file_listbox.delete(0, "end")

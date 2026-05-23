@@ -1,6 +1,8 @@
 from datetime import date
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
@@ -295,6 +297,8 @@ class ExcelMerger:
             report_date = date.today().strftime("%d-%b")
 
         start_row = 0
+        report_header_row: Optional[int] = None
+        table_ranges: List[Dict[str, object]] = []
         with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
             if max_columns > 0:
                 header_row = [""] * max_columns
@@ -307,25 +311,120 @@ class ExcelMerger:
                     index=False,
                     header=False,
                 )
+                report_header_row = start_row + 1
                 start_row += 2
 
             for title, table in tables.items():
                 display_title = Path(title).stem
+                title_row = start_row
                 pd.DataFrame([[display_title]]).to_excel(
                     writer,
                     sheet_name=sheet_name,
-                    startrow=start_row,
+                    startrow=title_row,
                     index=False,
                     header=False,
                 )
-                start_row += 1
+                title_row_excel = title_row + 1
+                start_row = title_row + 1
+                header_row = start_row
                 table.to_excel(
                     writer,
                     sheet_name=sheet_name,
-                    startrow=start_row,
+                    startrow=header_row,
                     index=False,
                 )
-                start_row += len(table) + 1 + table_spacing
+                header_row_excel = header_row + 1
+                table_ranges.append(
+                    {
+                        "title_row": title_row_excel,
+                        "header_row": header_row_excel,
+                        "row_count": len(table),
+                        "col_count": len(table.columns),
+                        "headers": list(table.columns),
+                    }
+                )
+                start_row = header_row + len(table) + 1 + table_spacing
+
+            ws = writer.sheets.get(sheet_name)
+            if ws is not None and table_ranges:
+                # Apply consistent styling to report tables.
+                font_name = "Comic Sans MS"
+                body_font = Font(name=font_name, color="000000")
+                header_font = Font(name=font_name, bold=True, color="1F4E79")
+                title_font = Font(name=font_name, bold=True, color="1F4E79")
+                header_fill = PatternFill(fill_type="solid", fgColor="D9E2F3")
+                center = Alignment(horizontal="center", vertical="center", wrap_text=False)
+                thin = Side(style="thin", color="9BA3AF")
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+                target_headers = {"sn", "status", "position", "truck"}
+
+                if report_header_row is not None:
+                    if max_columns > 1:
+                        ws.merge_cells(
+                            start_row=report_header_row,
+                            start_column=1,
+                            end_row=report_header_row,
+                            end_column=max_columns - 1,
+                        )
+                    for col in range(1, max_columns + 1):
+                        cell = ws.cell(row=report_header_row, column=col)
+                        cell.font = title_font
+                        cell.alignment = center
+
+                for table_info in table_ranges:
+                    title_row_excel = int(table_info["title_row"])
+                    header_row_excel = int(table_info["header_row"])
+                    row_count = int(table_info["row_count"])
+                    col_count = int(table_info["col_count"])
+                    headers = [str(h) for h in table_info["headers"]]
+
+                    if col_count > 1:
+                        ws.merge_cells(
+                            start_row=title_row_excel,
+                            start_column=1,
+                            end_row=title_row_excel,
+                            end_column=col_count,
+                        )
+                    title_cell = ws.cell(row=title_row_excel, column=1)
+                    title_cell.font = title_font
+                    title_cell.alignment = center
+
+                    end_row = header_row_excel + row_count
+                    for row in range(header_row_excel, end_row + 1):
+                        for col in range(1, col_count + 1):
+                            cell = ws.cell(row=row, column=col)
+                            cell.font = body_font
+                            cell.alignment = center
+                            cell.border = border
+
+                    for col, header in enumerate(headers, start=1):
+                        cell = ws.cell(row=header_row_excel, column=col)
+                        cell.font = header_font
+                        if header.strip().lower() in target_headers:
+                            cell.fill = header_fill
+
+                default_width = 10
+                max_lengths: Dict[int, int] = {}
+                for table in tables.values():
+                    for col_index, header in enumerate(table.columns, start=1):
+                        max_len = max_lengths.get(col_index, 0)
+                        max_len = max(max_len, len(str(header)))
+                        values = table.iloc[:, col_index - 1].tolist()
+                        for value in values:
+                            if value is None or (isinstance(value, float) and pd.isna(value)):
+                                continue
+                            if pd.isna(value):
+                                continue
+                            max_len = max(max_len, len(str(value)))
+                        max_lengths[col_index] = max_len
+
+                for col_index in range(1, max_columns + 1):
+                    max_len = max_lengths.get(col_index, 0)
+                    width = max_len + 2
+                    if width > default_width:
+                        column_letter = get_column_letter(col_index)
+                        ws.column_dimensions[column_letter].width = width
 
         return output_file
 
