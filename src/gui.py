@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import tkinter as tk
@@ -94,6 +94,9 @@ class DataDockApp:
         self.status_var      = tk.StringVar(value="Ready")
         self.file_count_var  = tk.StringVar(value="0 files")
         self.row_count_var   = tk.StringVar(value="")
+        self.log_buffer: List[Tuple[str, str]] = []
+        self.log_window: Optional[tk.Toplevel] = None
+        self.log_text: Optional[tk.Text] = None
 
         self._configure_style()
         self._build_ui()
@@ -192,13 +195,11 @@ class DataDockApp:
         # Right: main content fills the rest
         content = tk.Frame(body, bg=C["bg"])
         content.pack(side="left", fill="both", expand=True)
-        content.rowconfigure(0, weight=12)
-        content.rowconfigure(1, weight=1, minsize=90)
+        content.rowconfigure(0, weight=1)
         content.columnconfigure(0, weight=1)
 
         self._build_sidebar()
         self._build_viewer(content)
-        self._build_log(content)
         self._build_footer()
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -222,6 +223,9 @@ class DataDockApp:
         # Right: status + date
         right = tk.Frame(bar, bg=C["surface"])
         right.pack(side="right", padx=18)
+
+        ttk.Button(right, text="Process Logs", style="Ghost.TButton",
+                   command=self._open_log_window).pack(side="right", padx=(0, 12))
 
         self._kv_badge(right, "System Status", "Operational", C["success"]).pack(
             side="right", padx=(12, 0))
@@ -334,9 +338,10 @@ class DataDockApp:
 
     # ── Output Viewer ─────────────────────────────────────────────────────────
     def _build_viewer(self, parent: tk.Widget) -> None:
-        outer = tk.Frame(parent, bg=C["surface"],
-                         highlightbackground=C["border"],
-                         highlightthickness=1)
+        outer = tk.Frame(parent, bg=C["surface"], height=100,
+                 highlightbackground=C["border"],
+                 highlightthickness=1)
+        outer.grid_propagate(False)
         outer.grid(row=0, column=0, sticky="nsew", padx=12, pady=(10, 4))
         outer.rowconfigure(4, weight=1)
         outer.columnconfigure(0, weight=1)
@@ -460,12 +465,21 @@ class DataDockApp:
         self.tree.configure(yscrollcommand=y_scroll.set,
                             xscrollcommand=x_scroll.set)
 
-    # ── Log panel ─────────────────────────────────────────────────────────────
-    def _build_log(self, parent: tk.Widget) -> None:
-        outer = tk.Frame(parent, bg=C["surface"],
+    # ── Log window ───────────────────────────────────────────────────────────
+    def _open_log_window(self) -> None:
+        if self.log_window and self.log_window.winfo_exists():
+            self.log_window.lift()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("Process Logs")
+        win.configure(bg=C["surface"])
+        win.minsize(600, 300)
+
+        outer = tk.Frame(win, bg=C["surface"],
                          highlightbackground=C["border"],
                          highlightthickness=1)
-        outer.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 10))
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)
 
@@ -475,15 +489,8 @@ class DataDockApp:
                  fg=C["text"], bg=C["surface_hi"],
                  padx=14, pady=8).pack(side="left")
 
-        # Clear log button
-        tk.Button(header, text="Clear", font=FONT_SMALL,
-                  fg=C["text_dim"], bg=C["surface_hi"],
-                  activeforeground=C["text_sub"], activebackground=C["surface_hi"],
-                  bd=0, padx=10, cursor="hand2",
-                  command=self._clear_log).pack(side="right", pady=6)
-
-        tk.Frame(outer, bg=C["border"], height=1).grid(row=0, column=0,
-                                                        sticky="ew", pady=(36, 0))
+        ttk.Button(header, text="Clear", style="Ghost.TButton",
+                   command=self._clear_log).pack(side="right", padx=10, pady=6)
 
         self.log_text = tk.Text(
             outer, bg=C["log_bg"], fg=C["log_text"],
@@ -506,7 +513,17 @@ class DataDockApp:
         self.log_text.tag_configure("ts",      foreground=C["text_dim"])
         self.log_text.tag_configure("bracket", foreground=C["text_dim"])
 
-        self._log("Awaiting input…")
+        for level, message in self.log_buffer:
+            self._append_log(message, level)
+
+        win.protocol("WM_DELETE_WINDOW", self._close_log_window)
+        self.log_window = win
+
+    def _close_log_window(self) -> None:
+        if self.log_window and self.log_window.winfo_exists():
+            self.log_window.destroy()
+        self.log_window = None
+        self.log_text = None
 
     # ── Footer ────────────────────────────────────────────────────────────────
     def _build_footer(self) -> None:
@@ -540,6 +557,12 @@ class DataDockApp:
 
     # ── Logging ───────────────────────────────────────────────────────────────
     def _log(self, message: str, level: str = "INFO") -> None:
+        self.log_buffer.append((level, message))
+        if self.log_text is None:
+            return
+        self._append_log(message, level)
+
+    def _append_log(self, message: str, level: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"[{ts}] ", "ts")
@@ -549,6 +572,9 @@ class DataDockApp:
         self.log_text.see("end")
 
     def _clear_log(self) -> None:
+        self.log_buffer.clear()
+        if self.log_text is None:
+            return
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
